@@ -1,0 +1,15 @@
+[Unit]
+Description=Home Camera Dashboard (recording trigger)
+After=network-online.target mediamtx.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=youruser
+WorkingDirectory=/home/youruser
+ExecStart=/usr/bin/python3 /home/youruser/record_server.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

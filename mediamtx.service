@@ -1,0 +1,15 @@
+[Unit]
+Description=MediaMTX Home Camera Streaming Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=youruser
+WorkingDirectory=/home/youruser/mediamtx
+ExecStart=/home/youruser/mediamtx/mediamtx
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

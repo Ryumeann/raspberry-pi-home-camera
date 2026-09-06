@@ -1,0 +1,17 @@
+# 録画ファイル
+recordings/
+*.mp4
+
+# 画像ファイル
+*.jpg
+*.jpeg
+*.png
+
+# MediaMTX関連
+*.tar.gz
+mediamtx
+
+# OS / エディタの自動生成ファイル
+__pycache__/
+.DS_Store
+.vscode/
