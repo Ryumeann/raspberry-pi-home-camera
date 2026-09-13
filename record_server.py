@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """録画トリガー用の軽量Webサーバー（標準ライブラリのみ）"""
 import subprocess
+import os
+import json
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from urllib.parse import urlparse, parse_qs
 
 # 録画スクリプトのパス
-RECORD_SCRIPT = "/home/youruser/record.sh"
+RECORD_SCRIPT = "/home/ryumean/record.sh"
+RECORDINGS_DIR = "/home/ryumean/recordings"
 # 待ち受けポート（MediaMTXが使う番号と被らないものを選ぶ）
 PORT = 8080
 
@@ -28,11 +32,16 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <body>
   <h1>Home Camera</h1>
   <div class="video-wrap">
-    <iframe src="http://your-pi-hostname.local:8889/cam" allow="autoplay"></iframe>
+    <iframe src="http://homecam.local:8889/cam" allow="autoplay"></iframe>
   </div>
   <button onclick="record()">● 録画（30秒）</button>
   <div id="status"></div>
+  
+  <h2 style="font-size: 1rem; margin-top: 32px;">録画一覧</h2>
+  <div id="recordings">読み込み中...</div>
+  
   <script>
+    // 録画を開始するボタン
     async function record() {
       const status = document.getElementById("status");
       const button = document.querySelector("button");
@@ -56,6 +65,32 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         status.textContent = "エラー: " + e;
       }
     }
+
+    // 録画一覧を取得して画面に描画する
+    async function loadRecordings() {
+      const container = document.getElementById("recordings");
+      try {
+        const res = await fetch("/recordings");
+        const files = await res.json();        // JSONを配列として受け取る
+        if (files.length === 0) {
+          container.textContent = "録画はまだありません";
+          return;
+        }
+        // 各録画を1行ずつHTMLに組み立てる
+        container.innerHTML = files.map(f =>
+          `<div style="padding: 8px; border-bottom: 1px solid #333;">
+             ${f.name} <span style="color:#888;">(${f.size_mb} MB)</span>
+             <a href="/video?file=${encodeURIComponent(f.name)}" target="_blank"
+                style="color:#6fa0ff; margin-left:8px;">再生</a>
+           </div>`
+        ).join("");
+      } catch (e) {
+        container.textContent = "一覧の取得に失敗しました: " + e;
+      }
+    }
+
+    // ページを開いたときに一覧を読み込む
+    loadRecordings();
   </script>
 </body>
 </html>"""
@@ -69,8 +104,54 @@ class RecordHandler(BaseHTTPRequestHandler):
             # record.sh をバックグラウンドで起動（完了を待たない＝即応答）
             subprocess.Popen([RECORD_SCRIPT])
             self._respond(200, "録画を開始しました（30秒）", "text/plain")
+        elif self.path == "/recordings":
+            self._respond(200, self._list_recordings(), "application/json")
+        elif self.path.startswith("/video?"):
+            self._serve_video()
         else:
             self._respond(404, "見つかりません", "text/plain")
+
+    def _list_recordings(self):
+        """録画フォルダ内の.mp4ファイルの一覧をjson文字列で返す"""
+        files = []
+        for name in os.listdir(RECORDINGS_DIR):
+            if name.endswith(".mp4"):
+                path = os.path.join(RECORDINGS_DIR, name)
+                size_mb = round(os.path.getsize(path) / (1024 * 1024), 1)
+                files.append({"name":name, "size_mb":size_mb})
+        files.sort(key=lambda x: x["name"], reverse=True)
+        # 新しい順に並べる（ファイル名に日時が入っているので名前の降順）
+        return json.dumps(files, ensure_ascii=False)
+      
+    def _serve_video(self):
+        """指定された録画ファイルを配信する（トラバーサル対策込み）"""
+
+        # URLからクエリパラメータ file を取り出す
+        query = parse_qs(urlparse(self.path).query)
+        filename = query.get("file", [""])[0]
+
+        # ★セキュリティ検証★ ファイル名だけを取り出し、余計なパスを排除
+        safe_name = os.path.basename(filename)
+        # .mp4 以外、または名前が変わってしまう入力は拒否
+        if not safe_name.endswith(".mp4") or safe_name != filename:
+            self._respond(400, "不正なファイル名です", "text/plain")
+            return
+
+        filepath = os.path.join(RECORDINGS_DIR, safe_name)
+        print(f"[DEBUG] filename={filename!r}, safe_name={safe_name!r}, filepath={filepath!r}")
+        # 実在しなければ404
+        if not os.path.isfile(filepath):
+            self._respond(404, "ファイルが見つかりません", "text/plain")
+            return
+
+        # ファイルを読み込んで動画として返す
+        with open(filepath, "rb") as f:
+            data = f.read()
+        self.send_response(200)
+        self.send_header("Content-Type", "video/mp4")
+        self.end_headers()
+        self.wfile.write(data)
+    
 
     def _respond(self, code, body, content_type):
         self.send_response(code)
